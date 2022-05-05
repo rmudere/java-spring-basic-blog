@@ -4,22 +4,26 @@ WORKDIR /src/app/
 
 # mvn needs a user.home in which to run as non-root
 # https://hub.docker.com/_/maven , "Running as non-root"
-# hence the mkdir and USER command later on
-RUN ["mkdir", "/home/projects"]
+# Use the official maven/Java 8 image to create a build artifact.
+# https://hub.docker.com/_/maven
+FROM maven:3.5-jdk-8-alpine as builder
 
-RUN groupadd projects && useradd -g projects projects && \
-  chown -R projects:projects /src/app && \
-  chown -R projects:projects /home/projects
+# Copy local code to the container image.
+WORKDIR /app
+COPY pom.xml ./
+COPY src ./src/
 
-# needed for mvn, see above
-USER projects
+# Build a release artifact.
+RUN mvn package -DskipTests
 
-COPY --chown=projects:projects ./pom.xml .
+# Use AdoptOpenJDK for base image.
+# It's important to use OpenJDK 8u191 or above that has container support enabled.
+# https://hub.docker.com/r/adoptopenjdk/openjdk8
+# https://docs.docker.com/develop/develop-images/multistage-build/#use-multi-stage-builds
+FROM adoptopenjdk/openjdk8:jdk8u202-b08-alpine-slim
 
-RUN ["mvn", "clean"]
+# Copy the jar to the production image from the builder stage.
+COPY --from=builder /app/target/blog-*.jar /blog.jar
 
-RUN ["mvn", "de.qaware.maven:go-offline-maven-plugin:resolve-dependencies"]
-
-COPY --chown=projects:projects . .
-
-ENTRYPOINT ["sh"]
+# Run the web service on container startup.
+CMD ["java","-Djava.security.egd=file:/dev/./urandom","-Dserver.port=${PORT}","-jar","/blog.jar"]
